@@ -27,6 +27,7 @@ class PostprocessConfig:
     opening_size: int = 5
     select: str = "center"  # "center" | "largest" | "all"
     border_penalty: float = 1.0
+    final_dilation: int = 0  # 0 => kapalı; seçilen bölgeyi genişletir
 
 
 def remove_small_regions(mask: np.ndarray, min_area: int) -> np.ndarray:
@@ -158,4 +159,14 @@ def postprocess(mask: np.ndarray, config: PostprocessConfig | None = None) -> np
             # Kapama yeni kapalı boşluklar bırakabilir.
             mask = fill_interior(mask)
 
-    return select_region(mask, config.select, config.border_penalty)
+    mask = select_region(mask, config.select, config.border_penalty)
+
+    # Eşikleme lezyonun soluk dış bandını kaçırma eğiliminde; referans maskeler
+    # o bandı da kapsadığı için seçilen bölgeyi biraz genişletmek örtüşmeyi artırır.
+    if config.final_dilation >= 3 and mask.any():
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (config.final_dilation, config.final_dilation)
+        )
+        mask = cv2.dilate(mask, kernel)
+
+    return mask

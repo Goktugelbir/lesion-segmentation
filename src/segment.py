@@ -40,6 +40,29 @@ def segment_otsu(image: np.ndarray, fov: np.ndarray | None = None) -> np.ndarray
     return ((gray < threshold) & (fov > 0)).astype(np.uint8)
 
 
+def segment_otsu_plus(
+    image: np.ndarray, fov: np.ndarray | None = None, shift: float = 0.06
+) -> np.ndarray:
+    """Mavi kanalda, deri tarafına kaydırılmış Otsu eşiği.
+
+    Düz Otsu'nun iki sistematik hatasını hedefler:
+    - Mavi kanal, gri seviyeye göre lezyon–deri kontrastı daha yüksek
+      (melanin maviyi en çok soğurur; deri kırmızıda parlak kalır).
+    - Otsu eşiği lezyonun koyu çekirdeğinde durur, soluk pigment geçişini
+      kaçırır (kesinlik 0,90, duyarlılık 0,65). Eşik, değer aralığının
+      `shift` kadarı deri tarafına kaydırılarak geçiş bandı da dahil edilir.
+    """
+    fov = _ones_like_mask(image) if fov is None else fov
+    channel = image[:, :, 2]
+
+    values = channel[fov > 0]
+    if values.size == 0 or values.min() == values.max():
+        return np.zeros(image.shape[:2], dtype=np.uint8)
+
+    threshold = threshold_otsu(values) + shift * float(values.max() - values.min())
+    return ((channel < threshold) & (fov > 0)).astype(np.uint8)
+
+
 def segment_adaptive(
     image: np.ndarray,
     fov: np.ndarray | None = None,
@@ -174,6 +197,7 @@ def segment_watershed(
 # böylece yeni bir yöntem eklemek tek satır oluyor.
 SEGMENTERS = {
     "otsu": segment_otsu,
+    "otsu_plus": segment_otsu_plus,
     "adaptive": segment_adaptive,
     "kmeans": segment_kmeans,
     "watershed": segment_watershed,

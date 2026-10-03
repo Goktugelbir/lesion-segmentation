@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 import cv2
 import numpy as np
+from skimage.filters import threshold_otsu
 
 
 def line_kernel(length: int, angle: int) -> np.ndarray:
@@ -227,6 +228,41 @@ def field_of_view(image: np.ndarray, dark_threshold: int = 25) -> np.ndarray:
     return cv2.erode(region, kernel, iterations=1)
 
 
+def vignette_mask(
+    image: np.ndarray, fov: np.ndarray | None = None, corner_radius: float = 0.9
+) -> np.ndarray:
+    """Dermatoskobun köşelerdeki yumuşak koyu halkasını (vinyet) işaretler.
+
+    `field_of_view` yalnızca tamamen siyah çerçeveyi tanıyor; HAM10000'deki
+    vinyet ise o eşiğin üstünde kalıyor ve eşikleme onu lezyon sanıyor. Burada
+    sabit parlaklık eşiği yerine görüntünün kendi Otsu eşiği kullanılıyor:
+    koyu sayılan, görüntünün köşe bölgesinde (merkeze normalize uzaklığı
+    `corner_radius`'tan büyük) kalan **ve** çerçeveye değen bileşenler vinyettir.
+
+    Köşe bölgesi şartı, kenara değen gerçek lezyonların silinmesini önler:
+    lezyon kadrajın ortasından kenara uzansa bile yalnızca köşedeki kısmı gider.
+    """
+    fov = np.ones(image.shape[:2], dtype=np.uint8) if fov is None else fov
+    channel = image[:, :, 2]  # mavi kanal: lezyon–deri kontrastı en yüksek
+    values = channel[fov > 0]
+    if values.size == 0 or values.min() == values.max():
+        return np.zeros(image.shape[:2], dtype=np.uint8)
+
+    height, width = channel.shape
+    ys, xs = np.mgrid[0:height, 0:width]
+    radius = np.hypot((xs - width / 2) / (width / 2), (ys - height / 2) / (height / 2))
+
+    dark = (channel < threshold_otsu(values)) & (fov > 0)
+    candidates = (dark & (radius > corner_radius)).astype(np.uint8)
+    _, labels = cv2.connectedComponents(candidates, connectivity=8)
+
+    frame = np.concatenate([labels[0], labels[-1], labels[:, 0], labels[:, -1]])
+    touching = np.unique(frame[frame > 0])
+    vignette = np.isin(labels, touching).astype(np.uint8)
+    # Halkanın yumuşak iç kenarını da dışarıda bırak.
+    return cv2.dilate(vignette, np.ones((7, 7), np.uint8))
+
+
 @dataclass
 class PreprocessConfig:
     """Ön işleme adımlarının açık/kapalı durumu ve parametreleri.
@@ -243,6 +279,7 @@ class PreprocessConfig:
     clahe_clip_limit: float = 2.0
     median_blur: int = 5  # 0 => kapalı
     restrict_to_fov: bool = True
+    remove_vignette: bool = False
 
 
 def preprocess(image: np.ndarray, config: PreprocessConfig | None = None) -> dict:
@@ -281,6 +318,14 @@ def preprocess(image: np.ndarray, config: PreprocessConfig | None = None) -> dic
     if config.shading_correction:
         current = correct_shading(current, fov=stages["fov"])
         stages["shade_corrected"] = current
+
+    if config.remove_vignette:
+        vignette = vignette_mask(current, stages["fov"])
+        refined = stages["fov"] & (1 - vignette)
+        # Vinyet görüntünün çoğunu kaplıyorsa tespit yanlıştır; dokunma.
+        if refined.sum() > 0.3 * refined.size:
+            stages["vignette"] = vignette
+            stages["fov"] = refined.astype(np.uint8)
 
     if config.clahe:
         current = enhance_contrast(current, clip_limit=config.clahe_clip_limit)

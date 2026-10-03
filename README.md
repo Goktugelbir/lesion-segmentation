@@ -16,19 +16,27 @@ adil biçimde karşılaştırılıyor ve sonuçlar istatistiksel testle doğrula
 
 | Yöntem | IoU | **Dice** | Dice (medyan) | Duyarlılık | Kesinlik | Doğruluk | XOR hata ↓ | HD95 ↓ | ASSD ↓ |
 |--------|-----|----------|---------------|------------|----------|----------|-----------|--------|--------|
-| **otsu** | **0,624** | **0,737** | **0,815** | 0,648 | 0,905 | 0,891 | **0,625** | **78,0** | **34,8** |
+| **otsu_plus** ¹ | **0,781** | **0,855** | **0,924** | **0,906** | 0,846 | **0,922** | 0,917 ² | **52,6** | **20,3** |
+| otsu | 0,624 | 0,737 | 0,815 | 0,648 | 0,905 | 0,891 | **0,625** | 78,0 | 34,8 |
 | watershed | 0,447 | 0,580 | 0,658 | 0,449 | 0,924 | 0,844 | 0,626 | 107,7 | 53,0 |
 | kmeans | 0,435 | 0,565 | 0,636 | 0,437 | **0,929** | 0,835 | 0,628 | 109,0 | 53,3 |
 | adaptive | 0,373 | 0,499 | 0,522 | 0,387 | 0,888 | 0,816 | 0,723 | 119,8 | 49,8 |
 
-↓ = küçük değer daha iyi. Dice standart sapması tüm yöntemlerde 0,23–0,26.
+↓ = küçük değer daha iyi. Dice standart sapması dört temel yöntemde 0,23–0,26, otsu_plus'ta 0,19.
+
+¹ Kendine göre ayarlanmış ön/son işleme kullanan geliştirilmiş Otsu — ayrıntılar
+[aşağıda](#otsu_plus-skoru-nasıl-artırıldı). Diğer dört yöntem ortak zinciri paylaşır.
+² Ortalama XOR birkaç aykırı değere bağlı: küçük lezyonlarda fazla bölütleme olunca
+lezyon alanına normalize edilen hata çok büyüyor (XOR > 3 olan görüntü 32 → 38).
+**Medyan XOR 0,320 → 0,155** ile yarıya iniyor; XOR > 3 olanlar hariç ortalama 0,396 → 0,259.
 
 **Kazanan: Otsu.** Hem en yüksek örtüşmeyi hem de en iyi sınır kalitesini (HD95, ASSD)
 veriyor — ve farkı küçük değil.
 
 | Yöntem | Dice > 0,8 olan görüntü | Tamamen başarısız (Dice < 0,05) |
 |--------|------------------------|--------------------------------|
-| otsu | **%55,4** | %4,9 |
+| otsu_plus | **%82,6** | **%1,8** |
+| otsu | %55,4 | %4,9 |
 | watershed | %16,4 | %6,9 |
 | kmeans | %16,3 | %6,3 |
 | adaptive | %12,9 | %5,1 |
@@ -61,6 +69,34 @@ kaçırması; HAM10000'in referans maskeleri ise bu geçiş bölgesini de lezyon
 
 Bu aynı zamanda **doğruluk (accuracy) metriğinin neden tek başına raporlanmaması**
 gerektiğinin örneği: adaptif yöntem %81,6 doğruluk alıyor ama Dice'ı 0,50.
+
+## otsu_plus: skoru nasıl artırıldı?
+
+Aşağıdaki iki bulgudan yola çıkıldı: yöntemler sistematik olarak **eksik bölütlüyor**
+(kesinlik yüksek, duyarlılık düşük) ve tam başarısızlıkların ana nedeni **vinyet halkası**.
+Dört değişiklik yapıldı:
+
+| Değişiklik | Neden |
+|-----------|-------|
+| CLAHE kapalı | Ablasyonda global eşiklemeye zarar verdiği görülmüştü |
+| Gri yerine **mavi kanal** | Melanin maviyi en çok soğurur; lezyon–deri kontrastı daha yüksek |
+| Eşik deri tarafına kaydırıldı (değer aralığının %6'sı) | Lezyonun soluk dış geçiş bandı da dahil ediliyor |
+| **Vinyet FOV'dan çıkarıldı** (`vignette_mask`) | Köşe bölgesinde, Otsu'ya göre koyu ve çerçeveye değen bileşenler vinyet sayılıyor; eşik kalan alanda yeniden hesaplanıyor |
+| Son maske 13 px genişletildi | Referans maskeler geçiş bandını da kapsıyor |
+
+**Overfitting'e karşı:** tüm parametreler raporlanan ilk 1000 görüntüden ayrı bir alt
+kümede (5000–5399. görüntüler, n=400) seçildi; yukarıdaki tablo hiç görülmemiş verideki
+sonuç. Ayar setindeki katkılar (Dice): CLAHE kapalı 0,709 → 0,720 · mavi kanal +
+kaydırma + genişletme → 0,826 · vinyet çıkarma → **0,859** (tam başarısızlık %5,2 → %1,2).
+
+Aynı 1000 görüntüde otsu_plus, otsu'yu görüntülerin **%85,4'ünde** yeniyor
+(Wilcoxon p < 10⁻¹⁰⁰). Bedeli: kesinlik 0,905 → 0,846; küçük lezyonlarda zaman zaman
+fazla bölütlüyor.
+
+```python
+from src.pipeline import default_pipeline
+mask = default_pipeline("otsu_plus").predict(image)
+```
 
 ## Ön işleme gerçekten işe yarıyor mu?
 
@@ -141,7 +177,8 @@ cezalandırılıyor.
 
 | Yöntem | Fikir | Güçlü yanı | Zayıf yanı |
 |--------|-------|-----------|-----------|
-| `otsu` | Histogramı iki sınıfa ayıran tek global eşik | Hızlı, parametresiz, en iyi sonuç | Lezyon–deri geçişi yumuşaksa eşiği kaydırır |
+| `otsu_plus` | Mavi kanalda kaydırılmış Otsu + vinyet çıkarma + genişletme | En iyi sonuç (Dice 0,855) | Küçük lezyonlarda fazla bölütleyebilir |
+| `otsu` | Histogramı iki sınıfa ayıran tek global eşik | Hızlı, parametresiz, temel yöntemlerin en iyisi | Lezyon–deri geçişi yumuşaksa eşiği kaydırır |
 | `adaptive` | Eşik her piksel için komşuluğundan | Düzgün olmayan aydınlatmaya dayanıklı | Geniş lezyonun içini kaçırır; blok boyutuna çok duyarlı |
 | `kmeans` | LAB uzayında renk kümeleme, en koyu küme | En yüksek kesinlik | Başlangıca duyarlı, yavaş |
 | `watershed` | Otsu'dan işaretleyici, gradyana göre havza | Bitişik yapıları ayırır | Otsu'nun tohumuna bağımlı; burada onu geçemedi |
@@ -158,7 +195,9 @@ dört yöntem de köşe vinyetini seçmiş, hepsi Dice = 0 almış. `field_of_vi
 yakalamak için yazıldı ama eşiği (25 gri seviye) yalnızca *tamamen siyah* çerçeveleri
 tanıyor; HAM10000'deki yumuşak vinyet bu eşiğin üstünde kalıyor ve ablasyonda FOV'un
 etkisi sıfır çıkıyor. Eşiği görüntüye göre uyarlamak (sabit değer yerine yüzdelik)
-muhtemelen tam başarısızlıkların önemli kısmını giderir — **henüz yapılmadı**.
+muhtemelen tam başarısızlıkların önemli kısmını giderir. **otsu_plus'ta yapıldı**
+(`vignette_mask`): tam başarısızlık %4,9'dan %1,8'e indi. Dört temel yöntemde
+karşılaştırmayı bozmamak için kapalı (`PreprocessConfig(remove_vignette=True)` ile açılabilir).
 
 **2. Kıl maskesi lezyonun pigment ağını da işaretliyor.** Ön işleme figüründe görülüyor:
 lezyonun içindeki ince koyu yapılar kıl ile aynı şekil ve parlaklık özelliklerine sahip.

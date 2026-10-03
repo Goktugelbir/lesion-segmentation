@@ -60,10 +60,28 @@ class Pipeline:
         return compute_metrics(prediction, truth, with_boundary=with_boundary)
 
 
+def default_pipeline(method: str) -> Pipeline:
+    """Yöntemin varsayılan pipeline'ı.
+
+    Dört temel yöntem aynı ön/son işlemeyi paylaşır (adil karşılaştırma).
+    `otsu_plus` ise kendine göre ayarlanmış zinciri kullanır: ablasyonda CLAHE
+    global eşiklemeye zarar verdiği için kapalı, vinyet FOV'dan çıkarılıyor ve
+    son maske eksik bölütlemeyi telafi etmek için genişletiliyor. Parametreler
+    raporlanan 1000 görüntüden ayrı bir alt kümede (5000–5399) seçildi.
+    """
+    if method == "otsu_plus":
+        return Pipeline(
+            method=method,
+            pre=PreprocessConfig(clahe=False, remove_vignette=True),
+            post=PostprocessConfig(final_dilation=13),
+        )
+    return Pipeline(method=method)
+
+
 def build_pipelines(methods=None) -> dict[str, Pipeline]:
     """Karşılaştırma için varsayılan pipeline kümesi üretir."""
     methods = list(SEGMENTERS) if methods is None else list(methods)
-    return {name: Pipeline(method=name) for name in methods}
+    return {name: default_pipeline(name) for name in methods}
 
 
 def ablation_pipelines(method: str = "otsu") -> dict[str, Pipeline]:
