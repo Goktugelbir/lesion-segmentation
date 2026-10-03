@@ -1,0 +1,20 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# Veri setleri ve üretilen çıktılar
+data/
+data_synthetic/
+results*.csv
+*.png
+*.jpg
+*.jpeg
+!docs/*.png
+
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+numpy>=1.24
+opencv-python>=4.8
+scikit-image>=0.21
+scipy>=1.10
+pandas>=2.0
+matplotlib>=3.7
+
+# Notebook'u çalıştırmak için (CLI ve testler için gerekmez)
+jupyter>=1.0
