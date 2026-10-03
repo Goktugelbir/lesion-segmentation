@@ -117,6 +117,71 @@ def compare_methods(
     return figure
 
 
+def showcase(cases, pipelines, metric: str = "dice", stage: str = "result"):
+    """Girdi → ön işleme → yöntemler → gerçek maske panelini tek figürde kurar.
+
+    Her satır bir örnek. Projeyi ilk kez gören biri için en açıklayıcı görsel
+    bu: hem pipeline'ın adımlarını hem de yöntemler arası farkı aynı anda
+    gösterir.
+
+    Args:
+        cases: (başlık, görüntü, gerçek maske) üçlülerinden oluşan liste.
+        pipelines: {yöntem adı: Pipeline}.
+        metric: alt başlıklarda gösterilecek metrik.
+        stage: ön işleme sütununda gösterilecek aşama anahtarı.
+    """
+    method_names = list(pipelines)
+    columns = 3 + len(method_names)  # orijinal + ön işleme + gerçek + yöntemler
+    rows = len(cases)
+
+    figure, axes = plt.subplots(
+        rows, columns, figsize=(2.6 * columns, 2.9 * rows + 0.6), squeeze=False
+    )
+
+    for row, (label, image, truth) in enumerate(cases):
+        stages = None
+        for column, title in enumerate(["Orijinal", "Ön işleme", "Gerçek maske"]):
+            axis = axes[row][column]
+            if column == 0:
+                axis.imshow(image)
+            elif column == 1:
+                # Ön işlemeyi bir kez hesaplayıp yeniden kullanıyoruz.
+                stages = next(iter(pipelines.values())).run(image)
+                axis.imshow(stages[stage])
+            else:
+                axis.imshow(overlay_contours(image, truth=truth))
+            if row == 0:
+                axis.set_title(title, fontsize=10, fontweight="bold")
+            _hide_axes(axis)
+
+        for index, name in enumerate(method_names):
+            axis = axes[row][3 + index]
+            prediction = align(pipelines[name].predict(image), truth)
+            score = compute_metrics(prediction, truth, with_boundary=False)[metric]
+            axis.imshow(overlay_contours(image, truth=truth, prediction=prediction))
+            axis.set_title(
+                f"{name}\n{metric}={score:.3f}",
+                fontsize=10,
+                fontweight="bold" if row == 0 else "normal",
+                color=method_color(name, index),
+            )
+            _hide_axes(axis)
+
+        # Satır etiketini en soldaki eksenin y ekseninde göster.
+        axes[row][0].set_ylabel(label, fontsize=11, fontweight="bold")
+        axes[row][0].axis("on")
+        axes[row][0].set_xticks([])
+        axes[row][0].set_yticks([])
+
+    figure.suptitle(
+        "Yeşil: gerçek maske sınırı  ·  Kırmızı: tahmin sınırı",
+        fontsize=10,
+        y=0.02,
+    )
+    figure.tight_layout(rect=(0, 0.03, 1, 1))
+    return figure
+
+
 def plot_metric_bars(summary: dict, metrics=("iou", "dice", "sensitivity", "precision")):
     """Yöntem x metrik gruplu bar grafiği.
 

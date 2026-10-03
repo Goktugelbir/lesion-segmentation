@@ -43,7 +43,8 @@ def segment_otsu(image: np.ndarray, fov: np.ndarray | None = None) -> np.ndarray
 def segment_adaptive(
     image: np.ndarray,
     fov: np.ndarray | None = None,
-    block_size: int = 51,
+    block_size: int | None = None,
+    block_ratio: float = 0.25,
     constant: int = 5,
 ) -> np.ndarray:
     """Adaptif Gaussian eşikleme.
@@ -51,9 +52,20 @@ def segment_adaptive(
     Eşik her piksel için komşuluğundan hesaplanır, bu yüzden düzgün olmayan
     aydınlatmaya dayanıklıdır; karşılığında dokulu deride gürültülü maske
     üretir (son işleme bunu kısmen toparlıyor).
+
+    `block_size` verilmezse görüntü boyutuna göre belirlenir. Bu kritik: blok
+    lezyondan küçük kaldığında, lezyonun iç kısmında yerel ortalama piksel
+    değerine eşitlenir ve hiçbir piksel "ortalamadan koyu" sayılmaz — yöntem
+    yalnızca ince bir kenar halkası üretir. Blok lezyonu aşacak kadar büyük
+    olduğunda yerel ortalamaya deri de karışır ve iç bölge de yakalanır.
+    Sabit 51 piksellik blok, 600x450 dermoskopi görüntülerinde tam bu şekilde
+    başarısız oluyordu.
     """
     fov = _ones_like_mask(image) if fov is None else fov
     gray = _gray(image)
+
+    if block_size is None:
+        block_size = int(block_ratio * min(gray.shape))
 
     # blockSize tek ve >1 olmak zorunda.
     block = max(3, block_size | 1)

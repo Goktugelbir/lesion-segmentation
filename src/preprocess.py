@@ -40,12 +40,25 @@ def hair_mask(
     kernel_length: int = 17,
     threshold: int = 10,
     min_hair_area: int = 25,
+    max_thickness: int = 7,
+    min_length: int = 12,
 ) -> np.ndarray:
     """Kıl piksellerini işaretleyen ikili maske üretir (DullRazor yaklaşımı).
 
     Kıllar çevrelerindeki deriden koyu olduğu için, morfolojik kapama onları
     "doldurur". Kapanmış görüntü ile orijinal arasındaki fark kılların
     bulunduğu yerde büyük olur.
+
+    Fark eşiklemesi tek başına yetmez: lezyonun kendi dokusu da (koyu benekler,
+    pigment ağı) eşiği geçer ve lezyonun içi kıl sanılıp inpaint ile silinir —
+    yani segmentasyonun aradığı yapı bozulur. Bu yüzden adaylar ayrıca
+    **kalınlık** olarak sınanıyor: kıl incedir, lezyon dokusu değil.
+
+    Kalınlık testi piksel düzeyinde, morfolojik açma ile yapılıyor: `max_thickness`
+    çapında bir diskin sığabildiği her yapı "kalın" sayılıp atılıyor. Bu ölçüt,
+    bileşen başına en-boy oranı hesaplamaktan daha sağlam — birbirini kesen
+    kıllar tek bir büyük bağlantılı bileşen oluşturur ve bileşen bazlı ölçütler
+    o ağı "kalın" sanıp tüm kılları eler.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
@@ -59,12 +72,24 @@ def hair_mask(
     response = cv2.absdiff(strongest, gray)
     mask = (response > threshold).astype(np.uint8)
 
-    # Eşikleme kıl olmayan tekil pikselleri de yakalar; alanı küçük olanları at.
-    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    cleaned = np.zeros_like(mask)
+    # Kalın yapıları (lezyon dokusu, koyu lekeler) açma ile bulup çıkar.
+    disk = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (max(3, max_thickness | 1), max(3, max_thickness | 1))
+    )
+    thick = cv2.morphologyEx(mask, cv2.MORPH_OPEN, disk)
+    thin = cv2.subtract(mask, thick)
+
+    # Geriye kalan ince ama kısa/yuvarlak lekeler lezyonun pigment dokusudur;
+    # kıl uzundur. Uzunluk şartı bu aşamada güvenli: kesişen kıllar tek bir
+    # bileşen oluşturduğundan sınır kutuları zaten büyük.
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(thin, connectivity=8)
+    keep = np.zeros(count, dtype=bool)
     for label in range(1, count):
-        if stats[label, cv2.CC_STAT_AREA] >= min_hair_area:
-            cleaned[labels == label] = 1
+        area = stats[label, cv2.CC_STAT_AREA]
+        length = max(stats[label, cv2.CC_STAT_WIDTH], stats[label, cv2.CC_STAT_HEIGHT])
+        keep[label] = area >= min_hair_area and length >= min_length
+
+    cleaned = keep[labels].astype(np.uint8)
 
     # İnpaint'in kıl kenarlarını da kapatması için biraz genişlet.
     return cv2.dilate(cleaned, np.ones((3, 3), np.uint8), iterations=1)

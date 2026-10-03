@@ -12,7 +12,10 @@ results*.csv
 *.png
 *.jpg
 *.jpeg
+
+# docs/ altındaki figürler ve yayınlanan sonuç tablosu repoya dahil
 !docs/*.png
+!docs/*.csv
 
 .vscode/
 .idea/

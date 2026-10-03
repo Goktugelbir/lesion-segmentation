@@ -1,42 +1,134 @@
 # Deri Lezyonu Segmentasyonu — Klasik Görüntü İşleme
 
 Dermoskopi görüntülerinde lezyon sınırını **derin öğrenme kullanmadan** bulan bir
-pipeline. Dört segmentasyon yöntemi, ortak ön/son işleme zinciri üzerinde adil biçimde
-karşılaştırılıyor ve sonuçlar istatistiksel testle doğrulanıyor.
+pipeline. Dört segmentasyon yöntemi, ortak ön işleme ve son işleme zinciri üzerinde
+adil biçimde karşılaştırılıyor ve sonuçlar istatistiksel testle doğrulanıyor.
 
-## Neden klasik yöntemler?
+![Yöntem karşılaştırması](docs/overview.png)
 
-Etiketli veri gerektirmez, saniyeler içinde çalışır ve her kararı açıklanabilir —
-hangi eşiğin neden seçildiği görülebilir. Buradaki asıl soru şu: *dermoskopi
-artefaktları düzgün temizlendiğinde klasik eşikleme nereye kadar gider?*
+> Terminoloji: **pipeline** baştan sona akışın tamamını, **zincir** ise ön işleme ya da
+> son işleme alt dizisini anlatır.
+
+## Sonuçlar
+
+**HAM10000** veri setinden **1000 görüntü** üzerinde ölçüldü
+(ortalama lezyon alanı: görüntünün %25,4'ü). Ham sonuçlar: [`docs/results_1000.csv`](docs/results_1000.csv)
+
+| Yöntem | IoU | **Dice** | Dice (medyan) | Duyarlılık | Kesinlik | Doğruluk | XOR hata ↓ | HD95 ↓ | ASSD ↓ |
+|--------|-----|----------|---------------|------------|----------|----------|-----------|--------|--------|
+| **otsu** | **0,624** | **0,737** | **0,815** | 0,648 | 0,905 | 0,891 | **0,625** | **78,0** | **34,8** |
+| watershed | 0,447 | 0,580 | 0,658 | 0,449 | 0,924 | 0,844 | 0,626 | 107,7 | 53,0 |
+| kmeans | 0,435 | 0,565 | 0,636 | 0,437 | **0,929** | 0,835 | 0,628 | 109,0 | 53,3 |
+| adaptive | 0,373 | 0,499 | 0,522 | 0,387 | 0,888 | 0,816 | 0,723 | 119,8 | 49,8 |
+
+↓ = küçük değer daha iyi. Dice standart sapması tüm yöntemlerde 0,23–0,26.
+
+**Kazanan: Otsu.** Hem en yüksek örtüşmeyi hem de en iyi sınır kalitesini (HD95, ASSD)
+veriyor — ve farkı küçük değil.
+
+| Yöntem | Dice > 0,8 olan görüntü | Tamamen başarısız (Dice < 0,05) |
+|--------|------------------------|--------------------------------|
+| otsu | **%55,4** | %4,9 |
+| watershed | %16,4 | %6,9 |
+| kmeans | %16,3 | %6,3 |
+| adaptive | %12,9 | %5,1 |
+
+### Farklar anlamlı mı?
+
+Aynı 1000 görüntü üzerinde eşleştirilmiş **Wilcoxon işaretli sıra testi**:
+
+| A | B | Dice A | Dice B | Fark | A'nın kazandığı görüntü | p | Anlamlı |
+|---|---|--------|--------|------|------------------------|---|---------|
+| otsu | watershed | 0,737 | 0,580 | +0,157 | %93,6 | <0,0001 | ✔ |
+| otsu | kmeans | 0,737 | 0,565 | +0,172 | %96,1 | <0,0001 | ✔ |
+| otsu | adaptive | 0,737 | 0,499 | +0,238 | %91,1 | <0,0001 | ✔ |
+| watershed | adaptive | 0,580 | 0,499 | +0,081 | %60,8 | <0,0001 | ✔ |
+| kmeans | adaptive | 0,565 | 0,499 | +0,066 | %56,8 | <0,0001 | ✔ |
+| watershed | kmeans | 0,580 | 0,565 | +0,014 | %54,1 | 0,012 | ✔ (ama önemsiz) |
+
+Otsu'nun üstünlüğü hem büyük hem tutarlı: görüntülerin %91–96'sında diğerlerini yeniyor.
+Buna karşılık watershed ile k-means arasındaki fark istatistiksel olarak anlamlı
+(p = 0,012) ama **pratikte önemsiz** — 0,014 Dice farkı ve görüntülerin yalnızca
+%54'ünde kazanıyor. Büyük örneklemde küçük farkların da "anlamlı" çıkması bu testin
+bilinen davranışı; p değerine bakıp etki büyüklüğünü görmezden gelmemek gerekiyor.
+
+### Neden hepsi eksik bölütlüyor?
+
+Dikkat çeken örüntü: **kesinlik yüksek (0,89–0,93), duyarlılık düşük (0,39–0,65).**
+Yani yöntemler buldukları yerde haklı, ama lezyonun tamamını bulamıyorlar. Sebebi,
+eşiklemenin lezyonun koyu çekirdeğini yakalayıp çevresindeki soluk pigment geçişini
+kaçırması; HAM10000'in referans maskeleri ise bu geçiş bölgesini de lezyona dahil ediyor.
+
+Bu aynı zamanda **doğruluk (accuracy) metriğinin neden tek başına raporlanmaması**
+gerektiğinin örneği: adaptif yöntem %81,6 doğruluk alıyor ama Dice'ı 0,50.
+
+## Ön işleme gerçekten işe yarıyor mu?
+
+Her adım tek tek kapatılıp Dice'taki değişim ölçüldü (ablasyon). Pozitif değer, o adımın
+**kapatılmasının** sonucu iyileştirdiği anlamına gelir — yani adım zarar veriyor demektir.
+
+| Kapatılan adım | otsu (n=300) | adaptive (n=150) | kmeans (n=150) | watershed (n=150) |
+|----------------|-------------|------------------|----------------|-------------------|
+| CLAHE | **+0,009** | **−0,123** | **+0,047** | **+0,061** |
+| Saç temizleme | +0,001 | +0,055 | +0,011 | −0,010 |
+| Gölge düzeltme | −0,013 | +0,014 | +0,011 | −0,016 |
+| FOV kısıtlaması | 0,000 | 0,000 | +0,007 | 0,000 |
+| Tüm ön işleme | −0,026 | −0,106 | +0,060 | −0,028 |
+
+Buradan çıkan en önemli sonuç beklenmedikti: **ön işleme ile segmentasyon yöntemi
+etkileşiyor, tek bir ortak ön işleme hepsi için optimal değil.**
+
+- **CLAHE adaptif yöntem için hayati (−0,123), diğer üçü için zararlı (+0,05–0,06).**
+  Mantıklı: adaptif eşikleme kararını yerel kontrasttan verir, CLAHE tam da onu
+  güçlendirir. Global yöntemlerde ise CLAHE lezyon–deri arasındaki *global* parlaklık
+  farkını sıkıştırıp Otsu'nun eşiğini bozuyor.
+- **Saç temizleme ortalamada nötr.** Beklenenden düşük; sebebi aşağıda.
+- **FOV kısıtlaması bu veri setinde hiçbir şey yapmıyor** — HAM10000 görüntülerinde
+  tamamen siyah çerçeve yok (ama koyu vinyet var, bkz. bilinen sorunlar).
+
+Varsayılan yapılandırma bilerek değiştirilmedi: yöntem başına ayrı ön işleme seçmek
+karşılaştırmayı adil olmaktan çıkarırdı. Yöntemine göre ayar yapmak isteyen
+`Pipeline(method=..., pre=PreprocessConfig(clahe=False))` ile bunu yapabilir.
 
 ## Pipeline
 
 ```
 Görüntü
   ├─ Ön işleme
-  │    ├─ DullRazor kıl temizleme   (4 yönlü doğrusal kapama + inpaint)
+  │    ├─ DullRazor kıl temizleme   (4 yönlü doğrusal kapama + kalınlık filtresi + inpaint)
   │    ├─ Median filtre             (kalan nokta gürültüsü)
   │    ├─ Gölge düzeltme            (deri piksellerine kuadratik yüzey fit'i)
   │    └─ CLAHE                     (LAB uzayında yalnızca L kanalı)
   ├─ Segmentasyon                   (otsu | adaptive | kmeans | watershed)
   └─ Son işleme
-       ├─ Açma → küçük bölge eleme
-       ├─ Delik doldurma
-       ├─ Kapama
+       ├─ Küçük bölge eleme → delik doldurma
+       ├─ Açma → kapama
        └─ Bölge seçimi              (merkez yakınlığı + kenar cezası)
 ```
 
-### Ön işlemedeki üç tasarım kararı
+![Ön işleme zinciri](docs/preprocessing.png)
+
+### Dört tasarım kararı
 
 **Gölge düzeltme neden bulanıklaştırma ile yapılmıyor?**
 Yaygın yaklaşım, aydınlatma alanını görüntünün çok bulanık halinden tahmin etmektir.
 Büyük bir lezyon da koyu olduğu için bu tahmine karışır; bölme işlemi lezyonu
 aydınlatır ve segmentasyon için gereken kontrast kaybolur. Bunun yerine parlaklık
-kanalına **yalnızca deri piksellerinden** (parlaklığı medyanın üzerindekiler) ikinci
-derece bir yüzey oturtuluyor. Vinyet merkezden uzaklıkla yaklaşık kuadratik azaldığı
-için bu model yeterli. `tests/test_pipeline.py::test_shading_correction_preserves_lesion_contrast`
-bu gerilemeyi yakalıyor.
+kanalına **yalnızca deri piksellerinden** ikinci derece bir yüzey oturtuluyor.
+`test_shading_correction_preserves_lesion_contrast` bu gerilemeyi yakalıyor.
+
+**Adaptif eşiklemenin blok boyutu neden sabit değil?**
+Blok lezyondan küçük kaldığında, lezyonun iç kısmında yerel ortalama piksel değerine
+eşitlenir ve hiçbir piksel "ortalamadan koyu" sayılmaz — yöntem yalnızca ince bir kenar
+halkası üretir. 20 görüntülük bir pilot ölçümde adaptif yöntemin Dice'ı, sabit 51
+piksellik blok ve açma-önce sıralamasıyla **0,089**'du; blok görüntü boyutunun %25'ine
+bağlanıp son işleme sırası düzeltildiğinde aynı görüntülerde **0,471**'e çıktı
+(1000 görüntülük nihai ölçümde 0,499).
+
+**Son işlemede sıra neden önemli?**
+Açma ince yapıları siler — adaptif eşiklemenin ürettiği kenar halkası da ince bir
+yapıdır. Açma önce çalıştırılırsa halka tamamen yok olur ve doldurulacak bir şey kalmaz.
+Bu yüzden sıra: gürültü eleme → delik doldurma → açma → kapama.
 
 **Bölge seçiminde neden kenar cezası var?**
 Lezyon kadraja ortalanmış olur, bu yüzden "merkeze en yakın büyük bölgeyi seç" makul
@@ -45,38 +137,46 @@ görüntü merkezindedir ve alanı daha büyüktür — yalnızca merkez mesafes
 seçim halkayı lezyon sanar. Bu yüzden görüntü çerçevesini dolaşan bölgeler
 cezalandırılıyor.
 
-**Delik doldurma neden bölge seçiminden önce?**
-Adaptif eşikleme geniş ve düz bir lezyonun yalnızca kenarını yakalar (iç bölgede yerel
-kontrast yoktur). Bu ince halka doldurulmazsa alanı küçük kalır ve bölge seçiminde
-gürültüye kaybeder.
-
 ## Segmentasyon yöntemleri
 
 | Yöntem | Fikir | Güçlü yanı | Zayıf yanı |
 |--------|-------|-----------|-----------|
-| `otsu` | Histogramı iki sınıfa ayıran tek global eşik | Hızlı, parametresiz | Lezyon–deri geçişi yumuşaksa eşiği kaydırır |
-| `adaptive` | Eşik her piksel için komşuluğundan | Düzgün olmayan aydınlatmaya dayanıklı | Geniş lezyonun içini kaçırır; delik doldurmaya bağımlı |
-| `kmeans` | LAB uzayında renk kümeleme, en koyu küme | Parlaklık farkı az, renk farkı belirginse iyi | Başlangıca duyarlı, daha yavaş |
-| `watershed` | Otsu'dan işaretleyici, gradyana göre havza | Sınırı gerçek kenara oturtur | Yanlış işaretleyici → aşırı/eksik bölütleme |
+| `otsu` | Histogramı iki sınıfa ayıran tek global eşik | Hızlı, parametresiz, en iyi sonuç | Lezyon–deri geçişi yumuşaksa eşiği kaydırır |
+| `adaptive` | Eşik her piksel için komşuluğundan | Düzgün olmayan aydınlatmaya dayanıklı | Geniş lezyonun içini kaçırır; blok boyutuna çok duyarlı |
+| `kmeans` | LAB uzayında renk kümeleme, en koyu küme | En yüksek kesinlik | Başlangıca duyarlı, yavaş |
+| `watershed` | Otsu'dan işaretleyici, gradyana göre havza | Bitişik yapıları ayırır | Otsu'nun tohumuna bağımlı; burada onu geçemedi |
 
 Dördü de **aynı** ön ve son işlemeyi kullanır; aradaki tek fark eşik kararıdır.
-Karşılaştırmanın anlamlı olması için bu şart.
 
-## Metrikler
+## Bilinen sorunlar
 
-| Metrik | Ne ölçer | Not |
-|--------|----------|-----|
-| IoU, Dice | Bölge örtüşmesi | Standart; sınır kalitesine duyarsız |
-| Sensitivity, Specificity, Precision | Hata tipi dağılımı | Yöntem aşırı mı yoksa eksik mi bölütlüyor |
-| Accuracy | Piksel doğruluğu | **Tek başına yanıltıcı:** lezyon %10 ise her şeye "deri" diyen bir yöntem %90 alır |
-| XOR hatası | `(FP+FN) / lezyon alanı` | Küçük lezyonlarda accuracy'den çok daha ayırt edici |
-| HD95, ASSD | Sınır mesafesi (piksel) | Aynı Dice'lı iki maske farklı sınır kalitesinde olabilir. **Küçük = iyi** |
+**1. Dermatoskobun koyu köşe halkası lezyon sanılıyor.**
+İncelenen tam başarısızlık örneklerinde öne çıkan mekanizma bu (başarısızlık nedenleri
+tek tek sayılmadı, dolayısıyla "en sık" olduğu ölçülmüş değil).
+Yukarıdaki figürün alt satırı tam olarak bunu gösteriyor: küçük lezyon ortada dururken
+dört yöntem de köşe vinyetini seçmiş, hepsi Dice = 0 almış. `field_of_view()` bu durumu
+yakalamak için yazıldı ama eşiği (25 gri seviye) yalnızca *tamamen siyah* çerçeveleri
+tanıyor; HAM10000'deki yumuşak vinyet bu eşiğin üstünde kalıyor ve ablasyonda FOV'un
+etkisi sıfır çıkıyor. Eşiği görüntüye göre uyarlamak (sabit değer yerine yüzdelik)
+muhtemelen tam başarısızlıkların önemli kısmını giderir — **henüz yapılmadı**.
 
-Yöntemler ayrıca **eşleştirilmiş Wilcoxon işaretli sıra testi** ile karşılaştırılıyor:
-iki ortalamanın yakın olması "fark yok" demek değildir, bir yöntem sistematik olarak
-az farkla ama tutarlı biçimde daha iyi olabilir.
+**2. Kıl maskesi lezyonun pigment ağını da işaretliyor.** Ön işleme figüründe görülüyor:
+lezyonun içindeki ince koyu yapılar kıl ile aynı şekil ve parlaklık özelliklerine sahip.
+Kalınlık ve uzunluk filtreleri lezyonun kaba dokusunu elemeye yetiyor ama pigment ağını
+elemiyor. Saç temizlemenin ablasyonda nötr çıkmasının sebebi bu: kılları temizlerken
+lezyonun içini de bulanıklaştırıyor, kazanç ve kayıp birbirini götürüyor.
+
+**3. Çoklu lezyon desteklenmiyor.** Son işleme tek bölge döndürür. Figürdeki zor örnekte
+iki ayrı lezyon var; referans maske yalnızca birini işaretliyor, ama bu genel olarak
+belirsiz bir durum.
+
+Temel varsayım **lezyonun çevresindeki deriden koyu olmasıdır**; açık renkli
+(amelanotik) lezyonlarda dört yöntem de başarısız olur. Bu senaryolar için öğrenme
+tabanlı yöntemler gerekir.
 
 ## Kurulum
+
+**Python 3.9+** gerekir (geliştirme ve testler Python 3.12 ile yapıldı).
 
 ```bash
 pip install -r requirements.txt
@@ -92,11 +192,16 @@ python scripts/demo_synthetic.py
 
 Sentetik dermoskopi görüntüleri (koyu lezyon + kıllar + vinyet) üretir ve dört yöntemi
 karşılaştırır. **Bu görüntüler gerçek dermoskopiden belirgin olarak kolaydır** — çıkan
-skorlar kodun çalıştığını gösterir, gerçek performansı değil.
+skorlar (Dice ≈ 0,97) kodun çalıştığını gösterir, gerçek performansı değil.
 
 ### Gerçek veri seti ile
 
 Veri seti: [skin-cancer-lesions-segmentation](https://www.kaggle.com/datasets/volodymyrpivoshenko/skin-cancer-lesions-segmentation)
+(HAM10000, 10015 görüntü, 2,8 GB)
+
+```bash
+kaggle datasets download volodymyrpivoshenko/skin-cancer-lesions-segmentation -p data --unzip
+```
 
 Beklenen yapı (klasör adları `images`/`masks`, `image`/`mask`, `gt` … olabilir;
 otomatik bulunur):
@@ -108,18 +213,22 @@ data/
 ```
 
 ```bash
-# Tüm yöntemler, 300 görüntü
-python scripts/evaluate.py --data data --limit 300
+# Yukarıdaki sonuç tablosunu üreten komut
+python scripts/evaluate.py --limit 1000
 
 # Sadece iki yöntem, sınır metrikleri olmadan (daha hızlı)
 python scripts/evaluate.py --methods otsu,kmeans --no-boundary
 
-# Ön işleme ablasyonu: hangi adım ne kadar katkı veriyor
-python scripts/evaluate.py --ablation --limit 200
+# Ön işleme ablasyonu
+python scripts/evaluate.py --ablation --ablation-method otsu --limit 300
+
+# README figürleri
+python scripts/make_figures.py --results results_1000.csv
 ```
 
-Çıktı: görüntü başına metrikleri içeren `results.csv` + konsola özet tablo ve
-eşleştirilmiş karşılaştırma.
+Çıktı: görüntü başına metrikleri içeren CSV + konsola özet tablo ve eşleştirilmiş
+karşılaştırma. 1000 görüntü dört yöntemle yaklaşık 13 dakika sürüyor (sınır metrikleri
+dahil, tek çekirdek).
 
 ### Notebook
 
@@ -127,8 +236,7 @@ eşleştirilmiş karşılaştırma.
 jupyter notebook notebooks/analysis.ipynb
 ```
 
-Veri seti bulunursa onu kullanır, bulunamazsa otomatik olarak sentetik moda geçer —
-her ortamda çalışır.
+Veri seti bulunursa onu kullanır, bulunamazsa otomatik olarak sentetik moda geçer.
 
 ## Proje yapısı
 
@@ -144,11 +252,16 @@ src/
 └── synthetic.py    Veri seti olmadan test için sentetik görüntü üretimi
 scripts/
 ├── evaluate.py        Toplu değerlendirme CLI'si
+├── make_figures.py    README figürleri
 └── demo_synthetic.py  Veri setsiz demo
 tests/
-└── test_pipeline.py   17 test
+└── test_pipeline.py   Testler
 notebooks/
 └── analysis.ipynb     Uçtan uca analiz
+docs/
+├── overview.png       Yöntem karşılaştırma figürü
+├── preprocessing.png  Ön işleme zinciri figürü
+└── results_1000.csv   Yukarıdaki tablonun ham verisi
 ```
 
 Yeni bir segmentasyon yöntemi eklemek için `src/segment.py` içine fonksiyonu yazıp
@@ -165,11 +278,3 @@ python -m pytest tests -q            # pytest varsa
 Testler metriklerin elle hesaplanabilir değerlerde doğrulanmasını, ön işleme
 adımlarının beklenen davranışını ve dört yöntemin uçtan uca çalışmasını kapsıyor.
 Gerçek veri gerektirmezler.
-
-## Bilinen sınırlar
-
-Klasik eşiklemenin zorlandığı durumlar: çoklu lezyon, lezyonun kadrajı taşması,
-mürekkep işaretleri, jel/balon yansımaları ve açık renkli (amelanotik) lezyonlar.
-Pipeline'ın temel varsayımı **lezyonun çevresindeki deriden koyu olmasıdır**; bu
-varsayım bozulduğunda dört yöntem de başarısız olur. Bu senaryolar için öğrenme
-tabanlı yöntemler gerekir.

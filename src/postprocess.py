@@ -1,7 +1,7 @@
 """Ham segmentasyon maskesini kullanılabilir hale getiren son işleme.
 
-Dört yöntem de aynı zinciri kullanır: gürültü temizliği, delik doldurma,
-kenar yumuşatma ve tek bir lezyon bölgesinin seçilmesi.
+Dört yöntem de aynı son işleme zincirini kullanır: gürültü temizliği, delik
+doldurma, kenar yumuşatma ve tek bir lezyon bölgesinin seçilmesi.
 """
 
 from __future__ import annotations
@@ -127,21 +127,27 @@ def postprocess(mask: np.ndarray, config: PostprocessConfig | None = None) -> np
         return mask
 
     pixels = mask.size
+    min_area = int(pixels * config.min_area_ratio)
 
-    # Önce açma: ince köprüleri kopar, böylece bitişik gürültü lezyona
+    # Sıra önemli. Açma ince yapıları siler; adaptif eşiklemenin ürettiği
+    # kenar halkası da ince bir yapıdır. Açma önce çalıştırılırsa halka
+    # tamamen yok olur ve doldurulacak bir şey kalmaz — yöntem hiçbir şey
+    # bulamamış gibi görünür. Bu yüzden önce gürültü eleme ve doldurma,
+    # sonra açma yapılıyor.
+    mask = remove_small_regions(mask, min_area)
+
+    if config.fill_holes:
+        mask = fill_interior(mask)
+
+    # Açma: kalan ince köprüleri kopar, böylece bitişik gürültü lezyona
     # bağlanıp tek bir büyük bölge gibi görünmesin.
     if config.opening_size >= 3:
         kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (config.opening_size, config.opening_size)
         )
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-
-    mask = remove_small_regions(mask, int(pixels * config.min_area_ratio))
-
-    # Doldurma bölge seçiminden ÖNCE yapılır: adaptif eşiklemenin ürettiği
-    # ince halka, doldurulmazsa alanı küçük kalır ve seçimde kaybeder.
-    if config.fill_holes:
-        mask = fill_interior(mask)
+        # Açma yeni küçük parçalar bırakmış olabilir.
+        mask = remove_small_regions(mask, min_area)
 
     if config.closing_size >= 3:
         kernel = cv2.getStructuringElement(
