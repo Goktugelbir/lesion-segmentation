@@ -90,7 +90,8 @@ Beş değişiklik yapıldı:
 **Overfitting'e karşı:** tüm parametreler raporlanan ilk 1000 görüntüden ayrı bir alt
 kümede (5000–5399. görüntüler, n=400) seçildi; yukarıdaki tablo hiç görülmemiş verideki
 sonuç. Ayar setindeki katkılar (Dice): CLAHE kapalı 0,709 → 0,720 · mavi kanal +
-kaydırma + genişletme → 0,826 · vinyet çıkarma → **0,859** (tam başarısızlık %5,2 → %1,2).
+kaydırma + genişletme (9 px) → 0,826 · vinyet çıkarma → 0,856 (tam başarısızlık %5,2 → %1,2)
+· genişletme 13 px'e ayarlandı → **0,859**.
 
 Aynı 1000 görüntüde otsu_plus, otsu'yu görüntülerin **%85,4'ünde** yeniyor
 (Wilcoxon p < 10⁻¹⁰⁰). Bedeli: kesinlik 0,905 → 0,846; küçük lezyonlarda zaman zaman
