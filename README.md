@@ -317,3 +317,16 @@ python -m pytest tests -q            # pytest varsa
 Testler metriklerin elle hesaplanabilir değerlerde doğrulanmasını, ön işleme
 adımlarının beklenen davranışını ve dört yöntemin uçtan uca çalışmasını kapsıyor.
 Gerçek veri gerektirmezler.
+
+## Lisans ve veri kaynağı
+
+**Kod:** [MIT](LICENSE) lisansı ile yayınlanmıştır.
+
+**Veri:** Değerlendirmede ve `docs/` altındaki figürlerde kullanılan dermoskopi
+görüntüleri **HAM10000** veri setine aittir ve bu repoya dahil değildir. Veri seti
+[CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) lisanslıdır: kaynak
+gösterilerek ve ticari olmayan amaçla kullanılabilir. MIT lisansı bu görüntüleri kapsamaz.
+
+> Tschandl, P., Rosendahl, C. & Kittler, H. *The HAM10000 dataset, a large collection of
+> multi-source dermatoscopic images of common pigmented skin lesions.* Scientific Data 5,
+> 180161 (2018). https://doi.org/10.1038/sdata.2018.161
