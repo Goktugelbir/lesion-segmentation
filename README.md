@@ -27,11 +27,14 @@ adil biçimde karşılaştırılıyor ve sonuçlar istatistiksel testle doğrula
 ¹ Kendine göre ayarlanmış ön/son işleme kullanan geliştirilmiş Otsu — ayrıntılar
 [aşağıda](#otsu_plus-skoru-nasıl-artırıldı). Diğer dört yöntem ortak zinciri paylaşır.
 ² Ortalama XOR birkaç aykırı değere bağlı: küçük lezyonlarda fazla bölütleme olunca
-lezyon alanına normalize edilen hata çok büyüyor (XOR > 3 olan görüntü 32 → 38).
-**Medyan XOR 0,320 → 0,155** ile yarıya iniyor; XOR > 3 olanlar hariç ortalama 0,396 → 0,259.
+lezyon alanına normalize edilen hata çok büyüyor. XOR > 3 olan görüntü sayısı otsu'da 32,
+otsu_plus'ta 38. Buna karşılık **medyan XOR otsu'da 0,320, otsu_plus'ta 0,155** (yarıya
+iniyor); XOR > 3 olanlar hariç ortalama otsu'da 0,396, otsu_plus'ta 0,259.
 
-**Kazanan: Otsu.** Hem en yüksek örtüşmeyi hem de en iyi sınır kalitesini (HD95, ASSD)
-veriyor — ve farkı küçük değil.
+**Temel yöntemler arasında kazanan Otsu; geliştirilmiş hali otsu_plus genel olarak en
+iyisi.** Otsu, dört temel yöntem içinde hem en yüksek örtüşmeyi hem de en iyi sınır
+kalitesini (HD95, ASSD) veriyor — ve farkı küçük değil. otsu_plus ise kesinlik ve
+ortalama XOR dışındaki tüm metriklerde Otsu'yu geçiyor.
 
 | Yöntem | Dice > 0,8 olan görüntü | Tamamen başarısız (Dice < 0,05) |
 |--------|------------------------|--------------------------------|
@@ -74,7 +77,7 @@ gerektiğinin örneği: adaptif yöntem %81,6 doğruluk alıyor ama Dice'ı 0,50
 
 Aşağıdaki iki bulgudan yola çıkıldı: yöntemler sistematik olarak **eksik bölütlüyor**
 (kesinlik yüksek, duyarlılık düşük) ve tam başarısızlıkların ana nedeni **vinyet halkası**.
-Dört değişiklik yapıldı:
+Beş değişiklik yapıldı:
 
 | Değişiklik | Neden |
 |-----------|-------|
@@ -183,21 +186,27 @@ cezalandırılıyor.
 | `kmeans` | LAB uzayında renk kümeleme, en koyu küme | En yüksek kesinlik | Başlangıca duyarlı, yavaş |
 | `watershed` | Otsu'dan işaretleyici, gradyana göre havza | Bitişik yapıları ayırır | Otsu'nun tohumuna bağımlı; burada onu geçemedi |
 
-Dördü de **aynı** ön ve son işlemeyi kullanır; aradaki tek fark eşik kararıdır.
+Dört temel yöntem (`otsu`, `adaptive`, `kmeans`, `watershed`) **aynı** ön ve son işlemeyi
+kullanır; aradaki tek fark eşik kararıdır. `otsu_plus` kendine göre ayarlanmış zinciri kullanır.
 
 ## Bilinen sorunlar
 
-**1. Dermatoskobun koyu köşe halkası lezyon sanılıyor.**
-İncelenen tam başarısızlık örneklerinde öne çıkan mekanizma bu (başarısızlık nedenleri
-tek tek sayılmadı, dolayısıyla "en sık" olduğu ölçülmüş değil).
-Yukarıdaki figürün alt satırı tam olarak bunu gösteriyor: küçük lezyon ortada dururken
-dört yöntem de köşe vinyetini seçmiş, hepsi Dice = 0 almış. `field_of_view()` bu durumu
-yakalamak için yazıldı ama eşiği (25 gri seviye) yalnızca *tamamen siyah* çerçeveleri
-tanıyor; HAM10000'deki yumuşak vinyet bu eşiğin üstünde kalıyor ve ablasyonda FOV'un
-etkisi sıfır çıkıyor. Eşiği görüntüye göre uyarlamak (sabit değer yerine yüzdelik)
-muhtemelen tam başarısızlıkların önemli kısmını giderir. **otsu_plus'ta yapıldı**
-(`vignette_mask`): tam başarısızlık %4,9'dan %1,8'e indi. Dört temel yöntemde
-karşılaştırmayı bozmamak için kapalı (`PreprocessConfig(remove_vignette=True)` ile açılabilir).
+**1. Dermatoskobun koyu köşe halkası lezyon sanılıyor — otsu_plus'ta büyük ölçüde çözüldü.**
+Yukarıdaki figürün alt satırı sorunu gösteriyor: küçük lezyon ortada dururken dört temel
+yöntem de köşe vinyetini seçmiş, hepsi Dice = 0 almış. `field_of_view()` yalnızca *tamamen
+siyah* çerçeveleri (25 gri seviye eşiği) tanıdığı için HAM10000'deki yumuşak vinyeti
+kaçırıyor; ablasyonda FOV'un etkisi bu yüzden sıfır.
+
+`vignette_mask()` sabit eşik yerine görüntünün kendi Otsu eşiğini kullanıyor: köşe
+bölgesinde koyu kalan ve çerçeveye değen bileşenler vinyet sayılıp FOV'dan çıkarılıyor.
+Ölçülen etki:
+- Ayar setinde (n=400) yalnızca bu adım, Dice'ı **0,826 → 0,856**'ya, tam başarısızlığı
+  (Dice < 0,05) **%5,2 → %1,2**'ye indirdi.
+- Raporlanan 1000 görüntüde tam başarısızlık otsu'da %4,9, otsu_plus'ta **%1,8**
+  (bu fark otsu_plus'ın tüm değişikliklerinin toplam etkisi).
+
+Dört temel yöntemde karşılaştırmayı bozmamak için kapalı;
+`PreprocessConfig(remove_vignette=True)` ile açılabilir.
 
 **2. Kıl maskesi lezyonun pigment ağını da işaretliyor.** Ön işleme figüründe görülüyor:
 lezyonun içindeki ince koyu yapılar kıl ile aynı şekil ve parlaklık özelliklerine sahip.
